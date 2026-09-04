@@ -56,6 +56,9 @@ target_compile_definitions(PGK PRIVATE GLFW_INCLUDE_NONE)
 if(MSVC)
     target_compile_options(PGK PRIVATE /W4)
     set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT PGK)
+    # So F5 debugging in Visual Studio runs with CWD = the exe's output dir,
+    # where the post-build step below copies assets/ to.
+    set_target_properties(PGK PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:PGK>")
 endif()
 
 # Keep runtime assets (shaders, textures) next to the built executable.
