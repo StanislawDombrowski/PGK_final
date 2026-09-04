@@ -53,3 +53,37 @@ is expected since no application code exists yet. Note: the installed
 toolset identifies to CMake as generator `"Visual Studio 18 2026"`, not
 `"Visual Studio 17 2022"` — `README.md` updated to explain both and how to
 tell which one a given machine needs.
+
+---
+
+**Prompt:**
+> You can code all the boilerplate stuff. Window and context creation,
+> openGL basic pipeline - setting up data and buffers, sending data to GPU,
+> shaders compilation etc. Give me an exact report on what you did and
+> where. After that walk me through the current project structure - what is
+> left to code up and where to put it.
+
+**Result:** Implemented the engine-infrastructure layer (no scene/assignment
+logic):
+- `core/Window` — GLFW init, 3.3-core context creation, `gladLoadGL` function
+  pointer loading, resize callback hook.
+- `graphics/Renderer` — minimal GL state wrapper (depth test, clear, viewport).
+- `core/Application` — owns `Window` + `Renderer`, provides the `run(onUpdate,
+  onRender)` main loop.
+- `graphics/Shader` — compiles/links GLSL from disk with real error surfacing,
+  plus uniform setters (bool/int/float/vec2-4/mat3/mat4).
+- `graphics/Mesh` — shared `Vertex{position,normal,texCoords}` layout,
+  VAO/VBO/EBO upload, move-only, `draw()`.
+- `assets/shaders/basic.vert`/`basic.frag` — throwaway unlit smoke-test
+  shader (not the final lighting shader).
+- `src/main.cpp` — hardcoded triangle exercising the whole pipeline, clearly
+  marked to be deleted once `Scene` exists.
+- `CMakeLists.txt` — added `VS_DEBUGGER_WORKING_DIRECTORY` so F5-debugging in
+  Visual Studio finds the copied `assets/`.
+
+Verified for real: `cmake --build` compiled all 20 `.cpp` files clean under
+`/W4` (zero warnings), and `PGK.exe` was launched and screenshotted —
+confirmed a titled "PGK" window with the dark clear color and orange
+triangle rendering correctly. Then walked through `include/pgk/` and `src/`
+marking what's implemented vs. still empty (camera, input, geometry, scene,
+lighting, physics) and the suggested build order between them.
