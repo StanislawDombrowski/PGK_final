@@ -1,0 +1,27 @@
+# Build output
+build/
+out/
+bin/
+cmake-build-*/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+_deps/
+
+# Visual Studio / VS2022
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.user
+*.suo
+*.ilk
+*.pdb
+
+# Misc
+*.log
+.DS_Store
