@@ -8,35 +8,6 @@
 
 namespace pgk {
 
-namespace {
-
-// Slab-method ray/AABB intersection. Returns true and sets tHit (distance
-// along the ray) if the ray hits the box in front of the origin.
-bool rayIntersectsBounds(const glm::vec3& origin, const glm::vec3& direction, const Bounds& bounds, float& tHit)
-{
-    float tMin = 0.0f;
-    float tMax = std::numeric_limits<float>::max();
-
-    for (int axis = 0; axis < 3; ++axis) {
-        const float invDir = 1.0f / direction[axis];
-        float t0 = (bounds.min[axis] - origin[axis]) * invDir;
-        float t1 = (bounds.max[axis] - origin[axis]) * invDir;
-        if (invDir < 0.0f) {
-            std::swap(t0, t1);
-        }
-        tMin = std::max(tMin, t0);
-        tMax = std::min(tMax, t1);
-        if (tMax <= tMin) {
-            return false;
-        }
-    }
-
-    tHit = tMin;
-    return true;
-}
-
-} // namespace
-
 Input::Input(Window& window)
     : m_window(window)
 {
@@ -49,8 +20,12 @@ void Input::tryPushObjectUnderCursor(const Camera& camera, PhysicsWorld& physics
     float nearestDistance = std::numeric_limits<float>::max();
 
     for (RigidBody* body : physicsWorld.bodies()) {
+        if (!body->pushable) {
+            continue;
+        }
+
         float tHit = 0.0f;
-        if (rayIntersectsBounds(camera.position, camera.front, body->collider().bounds(), tHit) && tHit < nearestDistance) {
+        if (body->collider().raycast(camera.position, camera.front, tHit) && tHit < nearestDistance) {
             nearestDistance = tHit;
             nearestBody = body;
         }

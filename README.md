@@ -1,9 +1,10 @@
 # PGK
 
 A C++ / OpenGL 3.3 core scene: a hollow-cube room, a handful of primitives
-(spheres, cubes, cones), a global light plus a camera-attached directional
-light, free-fly camera movement, and a simple collision/physics system that
-bounces a ball around the room.
+(spheres, cubes, cones), five point lights, free-fly camera movement, and a
+collision/physics system with exact sphere/cone/box colliders — objects
+fall under gravity, bounce off the room and each other, and can be pushed
+around by the player.
 
 ## Dependencies
 
@@ -36,6 +37,15 @@ automatically.
 The `PGK` executable is written to `build/bin/`, with `assets/` (shaders,
 textures) copied alongside it after each build.
 
+## Controls
+
+| Input | Action |
+|---|---|
+| `W` / `A` / `S` / `D` | Move the camera (relative to where it's looking) |
+| Hold right mouse button + move mouse | Look around |
+| Left click | Push whatever's directly in front of the camera, within range — cones can't be pushed |
+| `Esc` | Quit |
+
 ## Project layout
 
 ```
@@ -46,8 +56,8 @@ src/           implementation
   graphics/    shader, mesh, renderer
   scene/       scene graph, room, generic game object
   geometry/    procedural primitives (cube, sphere, cone, plane)
-  lighting/    global + directional light
-  physics/     collision detection and simple rigid-body bounce
+  lighting/    point lights
+  physics/     exact sphere/cone/box colliders, rigid-body fall + bounce
 assets/
   shaders/     GLSL sources
   textures/    texture assets

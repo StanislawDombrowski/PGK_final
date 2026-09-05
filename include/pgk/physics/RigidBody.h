@@ -25,13 +25,18 @@ public:
     void addForce(const glm::vec3& force, const glm::vec3& contactPoint);
 
     void step(float deltaSeconds);
-    void resolveCollision(const Collider& other);
+
+    // Pushes this body out by `penetration` (a world-space direction*depth
+    // vector from a Collider::overlapsBox call) and reflects the velocity
+    // component along that direction, scaled by restitution.
+    void resolveCollision(const glm::vec3& penetration);
 
     glm::vec3 velocity{0.0f};
     glm::vec3 angularVelocity{0.0f}; // degrees per second, per axis
     bool useGravity = true;
     float restitution = 0.4f;      // bounciness: 0 = stops dead, 1 = perfectly elastic
     float momentOfInertia = 1.0f;  // resistance to rotation: higher = spins less per unit torque
+    bool pushable = true;          // if false, Input's left-click push ignores this body
 
     Collider& collider() const { return m_collider; }
 

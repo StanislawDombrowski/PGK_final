@@ -1,7 +1,5 @@
 #include "pgk/physics/RigidBody.h"
 
-#include <algorithm>
-
 namespace pgk {
 
 namespace {
@@ -35,35 +33,19 @@ void RigidBody::addForce(const glm::vec3& force, const glm::vec3& contactPoint)
     angularVelocity += angularImpulse / momentOfInertia;
 }
 
-void RigidBody::resolveCollision(const Collider& other)
+void RigidBody::resolveCollision(const glm::vec3& penetration)
 {
-    const glm::vec3 aMin = m_collider.min();
-    const glm::vec3 aMax = m_collider.max();
-    const glm::vec3 bMin = other.min();
-    const glm::vec3 bMax = other.max();
+    m_gameObject.position += penetration;
 
-    const float overlapX = std::min(aMax.x, bMax.x) - std::max(aMin.x, bMin.x);
-    const float overlapY = std::min(aMax.y, bMax.y) - std::max(aMin.y, bMin.y);
-    const float overlapZ = std::min(aMax.z, bMax.z) - std::max(aMin.z, bMin.z);
-
-    if (overlapX <= 0.0f || overlapY <= 0.0f || overlapZ <= 0.0f) {
-        return; // not actually overlapping
-    }
-
-    // Push out along whichever axis needs the smallest correction, and
-    // bounce the velocity component on that same axis.
-    if (overlapX <= overlapY && overlapX <= overlapZ) {
-        const float direction = (m_gameObject.position.x < other.gameObject().position.x) ? -1.0f : 1.0f;
-        m_gameObject.position.x += direction * overlapX;
-        velocity.x = -velocity.x * restitution;
-    } else if (overlapY <= overlapX && overlapY <= overlapZ) {
-        const float direction = (m_gameObject.position.y < other.gameObject().position.y) ? -1.0f : 1.0f;
-        m_gameObject.position.y += direction * overlapY;
-        velocity.y = -velocity.y * restitution;
-    } else {
-        const float direction = (m_gameObject.position.z < other.gameObject().position.z) ? -1.0f : 1.0f;
-        m_gameObject.position.z += direction * overlapZ;
-        velocity.z = -velocity.z * restitution;
+    const float penetrationLength = glm::length(penetration);
+    if (penetrationLength > 1e-8f) {
+        const glm::vec3 normal = penetration / penetrationLength;
+        const float velocityAlongNormal = glm::dot(velocity, normal);
+        // Only reflect if still moving into the surface — otherwise it's
+        // already separating and reflecting again would add energy.
+        if (velocityAlongNormal < 0.0f) {
+            velocity -= (1.0f + restitution) * velocityAlongNormal * normal;
+        }
     }
 
     m_gameObject.updateModelMatrix();

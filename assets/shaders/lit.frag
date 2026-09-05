@@ -16,7 +16,7 @@ struct PointLight {
     float quadratic;
 };
 
-#define MAX_POINT_LIGHTS 4
+#define MAX_POINT_LIGHTS 6
 
 uniform PointLight pointLights[MAX_POINT_LIGHTS];
 uniform int numPointLights;

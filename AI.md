@@ -640,3 +640,315 @@ around Z — and `rotation.z` climbed steadily frame by frame afterward
 (0.008 deg to 3.85 deg over ~300ms), confirming the integration in
 `step()` works. Reverted the debug print; `main.cpp` is back to the
 user's actual content.
+
+---
+
+**Prompt:**
+> I added a cone object that I want to use force on as well. For some
+> reason applying force on it does not work
+
+**Result:** Root-caused by reading `geometry/Cone.cpp`: unlike the cube
+(vertices +-0.5, centered on its own local origin) and sphere (radius from
+origin), `buildConeMesh` places the base at local `Y=0` and the apex at
+`Y=height` — the cone's pivot is its *base*, not its center. `Collider`
+assumed `GameObject::position` was always the box's center
+(`min/max = position +- halfExtents`), which is true for cube/sphere but
+wrong for the cone: with `coneObject` at `position.y=0.8`, scale `(1,2,1)`,
+the cone actually spans world `Y in [0.8, 2.8]`, but `coneCollider`'s
+`(1, 0.1, 1)` half-extents put its box at `Y in [0.7, 0.9]` — a thin slab
+covering only the very base, missing the entire upper 2 units most clicks
+would naturally aim at.
+
+Fixed generally rather than special-casing the cone: added an optional
+`centerOffset` parameter to `Collider` (`include/pgk/physics/Collider.h` /
+`src/physics/Collider.cpp`), defaulting to `(0,0,0)` so every existing
+collider (ground, wall, sphere) is byte-for-byte unaffected; `min()`/`max()`
+now compute from `position + centerOffset +- halfExtents`. Updated
+`coneCollider` in `main.cpp` to `halfExtents=(1,1,1)`,
+`centerOffset=(0,1,0)` (matching the cone's actual world footprint:
+radius 1 in X/Z, height 2 in Y with the box's center 1 unit above the
+base/position).
+
+Verified numerically: temporarily pointed the test camera directly at the
+cone (avoided simulating an aiming drag) and printed `coneBody.velocity`
+each frame. Before the fix this would have stayed near zero (matching the
+reported symptom); after the fix, confirmed velocity jumped from ~0 to
+`(~0, 1.86, -14.49)` the instant the left-click landed — the push registers
+correctly now. Reverted the temporary test camera and debug print;
+`main.cpp` is back to the user's actual content.
+
+---
+
+**Prompt:**
+> In the collider class you can prepare a sphere collider and cone colider,
+> so that it fits the nicely
+
+**Result:** Asked a clarifying question first: an exact tapered-cone
+collision test needs meaningfully more math than a bounding-cylinder
+approximation — which did the user want? User chose the exact tapered cone.
+Restructured `Collider` into an abstract shape interface plus three
+concrete subclasses (`include/pgk/physics/Collider.h` /
+`src/physics/Collider.cpp`), kept as one file pair per the user's "in the
+collider class" phrasing:
+- `Collider` (abstract base) — `overlapsBox(Bounds, out penetration vector)`
+  and `raycast(origin, direction, out tHit)`, pure virtual. Static obstacles
+  (room walls/floor) are always boxes, so shapes only need to know how to
+  test themselves against a box, not against every other shape pairwise.
+- `BoxCollider` — the previous AABB logic, unchanged behavior, now
+  implementing the virtual interface.
+- `SphereCollider` — true sphere (center + radius): `overlapsBox` via
+  closest-point-on-box-to-center, `raycast` via the standard ray/sphere
+  quadratic.
+- `ConeCollider` — true tapered cone (base radius + height, pivoted at its
+  base like `buildConeMesh`): `overlapsBox` slices the cone at the bottom
+  of its Y-overlap with the box (widest surviving cross-section, since the
+  cone narrows toward its apex) and tests that circle against the box's
+  XZ footprint; `raycast` solves the lateral surface's quadratic
+  (`x^2+z^2 = k^2(height-y)^2`) plus a separate base-cap disk test, taking
+  the nearest valid hit.
+
+This forced two further changes: `RigidBody::resolveCollision` now takes a
+`glm::vec3 penetration` directly (computed by whichever shape's
+`overlapsBox`) instead of recomputing box-vs-box overlap itself, and
+reflects velocity off the actual contact normal (`velocity -= (1+restitution)
+* dot(velocity,normal) * normal`, only when still moving into the surface)
+instead of the old "snap to one cardinal axis" heuristic — more correct in
+general, and necessary since sphere/cone penetration directions aren't
+axis-aligned. `PhysicsWorld::m_staticColliders` narrowed to
+`vector<BoxCollider*>` (nothing needs a non-box static obstacle currently).
+`Input.cpp`'s box-only `rayIntersectsBounds` free function was deleted —
+raycasting now goes through the virtual `Collider::raycast`, so it works
+correctly for whichever shape a `RigidBody` actually holds.
+`main.cpp`: `sphereCollider` -> `SphereCollider(sphereObject, 1.f)`,
+`coneCollider` -> `ConeCollider(coneObject, 1.f, 2.f)`.
+
+Verified thoroughly, not just by building:
+- Screenshotted the resting scene — sphere and cone both settle correctly
+  on the ground (no fall-through).
+- Confirmed the taper is actually respected, not approximated: added a
+  temporary block calling `coneCollider.raycast()` directly with two rays
+  at the cone's mid-height (radius 0.5 there) offset 0.3 and 0.8 from its
+  axis. The 0.3-offset ray hit at `t=8.6`, which is the exact analytic
+  answer (`z = 1 + sqrt(0.5^2-0.3^2) = 1.4`, `t = 10-1.4 = 8.6`); the
+  0.8-offset ray missed — correct, since 0.8 exceeds the true radius at
+  that height (0.5) despite being inside the cone's *base* radius (1.0),
+  which a naive bounding-cylinder approximation would have wrongly hit.
+  Reverted this test block after.
+- Re-ran the left-click push test end-to-end (screenshots) to confirm
+  the virtual-dispatch refactor didn't break the existing interaction —
+  sphere still launches away correctly on click.
+
+---
+
+**Prompt:**
+> The collisions do not quite work. For example there is no collision
+> between sphere and a cone
+
+**Result:** Root-caused: `PhysicsWorld::step()` only ever tested each
+dynamic body against the *static* colliders (ground/wall) — it never
+checked dynamic bodies against each other, so the sphere and cone could
+pass straight through one another regardless of how exact their individual
+shapes were. Added dynamic-vs-dynamic collision:
+- `Collider` gained `boundingSphereCenter()`/`boundingSphereRadius()`
+  (pure virtual, implemented on all three subclasses) and a new free
+  function `overlapsShapes(a, b, outPenetration)` in `Collider.cpp` that
+  dispatches by concrete type (`dynamic_cast`): exact sphere-vs-sphere
+  (classic center-distance-vs-radius-sum), exact sphere-vs-cone (reduces to
+  a 2D closest-point-on-two-line-segments problem in the cone's meridian
+  `(radius, height)` half-plane, exploiting rotational symmetry — same
+  technique as `ConeCollider::overlapsBox`'s height-slice trick, but a
+  proper closest-point query since a sphere isn't axis-aligned like a box),
+  box-vs-box (reuses the existing `overlapsBox`), and a conservative
+  bounding-sphere fallback for any other combination (e.g. two cones) so
+  unhandled pairs never silently pass through each other even without a
+  dedicated exact routine.
+- `PhysicsWorld::step()` now also loops over every unique pair of dynamic
+  bodies once, and on overlap pushes each one apart by half the penetration
+  in opposite directions (rather than only ever moving one side, matching
+  that both objects here are equally dynamic).
+
+Verified numerically: temporarily started the sphere directly overlapping
+the cone (`sphereObject` at `(2, 1.5, 1)`, deep inside the cone's solid
+volume) and logged both positions + their distance every frame. Confirmed
+they separated immediately — `dist` went from overlapping to `1.41` after
+the very first physics step, settling to a stable `~2.0` apart — and then
+continued falling together under gravity while maintaining that separation,
+proving the resolution is real and stable, not a one-off nudge. Reverted
+the temporary start position and debug print; `main.cpp` is back to the
+user's actual scene.
+
+---
+
+**Prompt:**
+> One last thing to work through. The scene file should contain a scene
+> class that on construction sets up all the objects in the scene. The
+> constructor will take a list of objects in the scene and init all the
+> memory and coliders. The room file is to create the data (list of
+> objects in the room) to create a room that will be fed into the scene.
+> The scene class will have a draw function to draw everything in the
+> scene. Also in order for the scene colider and physics setup, the
+> gameobject class should be modified to contain flags about collision,
+> rigidbody etc.
+
+**Result:** Implemented the `Scene`/`Room` layer that `main.cpp` had been
+marking as a TODO (`// ... Replace this block with pgk::Scene once the
+scene graph, geometry, and room exist.`) since the very first scaffold, and
+wired `main.cpp` to actually use it — finally fulfilling that comment.
+- `GameObject` (`include/pgk/scene/GameObject.h`) — added a `ColliderShape`
+  enum (`None/Box/Sphere/Cone`) plus per-shape parameter fields
+  (`colliderHalfExtents`/`colliderCenterOffset` for Box,
+  `colliderRadius`/`colliderHeight` for Sphere/Cone) and physics flags
+  (`isDynamic`, `useGravity`, `mass`, `restitution`), all defaulted to
+  "no collision, purely visual" so existing construction call sites don't
+  need updating.
+- `Scene` (`include/pgk/scene/Scene.h` / `src/scene/Scene.cpp`) —
+  constructor takes `std::vector<GameObject>` by value; for each one, moves
+  it into a `std::unique_ptr<GameObject>` (stable heap address, since
+  Collider/RigidBody hold references into it — a plain `vector<GameObject>`
+  would risk dangling references on reallocation), then reads its flags to
+  construct the matching `Collider` subtype and, if `isDynamic`, a
+  `RigidBody`, registering both with an internally-owned `PhysicsWorld`
+  (static objects register as `BoxCollider`s only, matching
+  `PhysicsWorld`'s existing constraint). `update(dt)` steps the physics
+  world; `draw(shader)` draws every owned object; `physicsWorld()` exposes
+  the internal world so `Input::update()` can still raycast/push against it.
+- `Room` (`include/pgk/scene/Room.h` / `src/scene/Room.cpp`) —
+  `buildRoom(cubeMesh, size, wallColor, wallThickness=0.3)` returns the six
+  wall `GameObject`s (floor/ceiling/4 walls) of a hollow room centered on
+  the X/Z origin with its floor at `y=0`, each pre-flagged as a static
+  `ColliderShape::Box` sized to match its own scale — pure data, ready to
+  be combined with other objects and hand to `Scene`.
+- `main.cpp` rewritten to match: builds the room via `buildRoom(cube,
+  {20,10,20}, ...)` (a real 6-wall enclosure — previously there was only a
+  floor + one partial wall, so this is a genuine upgrade toward the
+  original "hollow room" brief), flags the sphere/cone with their collider
+  shape + `isDynamic=true` instead of manually constructing
+  `Collider`/`RigidBody`/`PhysicsWorld`, combines everything into one
+  vector for `Scene`'s constructor, and replaced the manual per-object
+  `.draw()` calls and `physicsWorld.step()` with `scene.draw(shader)` /
+  `scene.update(dt)`. All previously-tuned values (3 point lights'
+  positions/colors/strengths, sphere/cone colors and positions) carried
+  over unchanged.
+
+Verified thoroughly:
+- Built clean after each stage (GameObject/Scene/Room alone first, then
+  the `main.cpp` integration) before moving on.
+- Screenshotted the default camera view — sphere and cone still rest
+  correctly on the floor, matching pre-refactor behavior.
+- Temporarily pulled the camera back/up (reverted after) to confirm the
+  full 6-wall room actually renders correctly — floor, walls, and their
+  lit interior surfaces all present with no gaps or inverted geometry.
+- Re-ran the left-click push end-to-end: sphere launches away correctly,
+  and the cone visibly reacts too (still colliding with it via the
+  dynamic-vs-dynamic system from the previous prompt) — confirming the
+  full pipeline (raycast through `Scene::physicsWorld()` -> `addForce` ->
+  integration -> collision resolution) works correctly through the new
+  ownership structure, not just each piece in isolation.
+
+---
+
+**Prompt:**
+> Okay. For the final setup - you can leave the cones without the ability
+> to add force to them. Also add a few more spheres and lights to make it
+> more interesting
+
+**Result:**
+- Made cones (and any future object) exclude-able from the push feature
+  via a new flag, following the same GameObject-flags-driven pattern as
+  the rest of physics setup: `GameObject::canBePushed` (default `true`) ->
+  `Scene`'s constructor copies it to a new `RigidBody::pushable` field ->
+  `Input::tryPushObjectUnderCursor` skips any body where `!pushable` before
+  raycasting against it. Set `coneObject.canBePushed = false` in `main.cpp`.
+- Added 3 more dynamic spheres (`sphereObject2/3/4`, distinct sizes/colors/
+  starting positions: red at `(-3,3,-2)`, green (smaller, radius 0.75) at
+  `(3,4,-2)`, gold (larger, radius 1.25) at `(-2,5,3)`) and 2 more point
+  lights (`pointLight4`/`pointLight5`, warm-orange and cool-blue accent
+  colors, filling the room's other two back corners) — bumped `lit.frag`'s
+  `MAX_POINT_LIGHTS` from 4 to 6 to fit (5 lights now used, 1 spare), and
+  `numPointLights` to 5.
+
+Verified: a stray `PGK.exe` from earlier testing was still holding the
+binary locked, causing `LNK1168`; killed it and rebuilt clean. Since
+`Scene` no longer exposes individual `RigidBody`s to `main.cpp` for a
+numeric velocity check (unlike earlier tests), verified the "cone can't be
+pushed" behavior visually instead: aimed a fixed test camera directly at
+the cone, clicked it three times, and confirmed it's pixel-for-pixel
+unchanged across before/after screenshots, while a screenshot from the
+same session shows all 4 spheres (red, blue, green, and gold) correctly
+colored and resting together with the cone via the existing collision
+system. Reverted the temporary test camera after.
+
+---
+
+**Prompt:**
+> You can make the spheres react to collision from anothe sphere.
+
+**Result:** No code changes needed — sphere-vs-sphere was already
+implemented as part of `overlapsShapes`'s dispatcher (from the "no
+collision between sphere and cone" fix a few prompts back), and
+`PhysicsWorld::step()` already checks every unique pair of dynamic bodies
+each frame, so with 4 spheres now in the scene this was already active.
+Verified it's genuinely working rather than just assuming so: temporarily
+moved `sphereObject3` to `(-3.5, 3, -2)`, 0.5 units from `sphereObject2` at
+`(-3, 3, -2)` — deeply overlapping, since their radii sum to 1.75 — and
+pointed a fixed test camera at that spot. Both screenshots (an early one
+and a later one) show the two spheres resting cleanly adjacent with no
+visible overlap, confirming the existing resolution logic separates them
+correctly. Reverted the temporary position and camera; `main.cpp` is back
+to the user's actual scene.
+
+---
+
+**Prompt:**
+> Okay, wraping up. Move the startin camera a bit highier. Write the
+> controlls to the README. Do a final check on the whole project and I
+> will commit
+
+**Result:**
+- Raised the starting camera from `y=0` to `y=1.5` (a standing-eye-height
+  offset within the room, floor at `y=0`, ceiling at `y=10`).
+- Added a `## Controls` table to `README.md` (WASD, right-drag to look,
+  left-click to push, Esc to quit), and fixed two inaccuracies the README
+  itself had been carrying: the intro claimed "a camera-attached
+  directional light" and the project-layout table said `lighting/` held a
+  "global + directional light" — **neither was ever actually implemented**
+  (`DirectionalLight.h`/`.cpp` are still empty stubs). Reworded both to
+  describe what's actually built (five point lights). Flagged this gap to
+  the user directly, since it was an explicit requirement from the original
+  assignment brief and is the one real gap found in this pass — everything
+  else scaffolded early (`Plane`, `Light` base class, `utils/Math.h`) was
+  optional scaffolding never required by the brief, not a regression.
+- Did a genuine from-scratch check, not just another incremental build:
+  deleted `build/` entirely, reconfigured, and rebuilt clean — this
+  surfaced one warning an incremental build had been hiding
+  (`Cone.cpp(54)`: unused `nextApex` local, genuinely dead — each side
+  triangle only ever used `currentApex`/`currentBase`/`nextBase`; removed
+  it). Also finally fixed the `main.cpp` narrowing warning that had been
+  flagged as "pre-existing, not touching it" in every review since the
+  camera/window code was first written — replaced the `glm::vec2 aspect`
+  workaround with plain `int` width/height. Full rebuild after both fixes:
+  zero warnings, zero errors.
+- Ran the exe with the raised camera and screenshotted it — confirms it
+  still launches, renders, and now shows a slightly elevated view into the
+  cluster of objects.
+- Checked `git status`/`git diff --stat` against the user's last commit
+  (`bcc13ca`) to sanity-check what's about to be committed: 18 files
+  changed, all attributable to work logged in this file, nothing
+  unexpected. Confirmed `cmake-build-clangd/` and `build/` are both
+  correctly gitignored (`cmake-build-*/` pattern already covers the
+  former). Noted (informational only, not fixed): the repo has no
+  `.gitattributes`, so git prints LF-to-CRLF warnings on these files —
+  harmless, just means line endings aren't pinned.
+
+---
+
+**Prompt:**
+> We will skip the directional light
+
+**Result:** Deliberate scope decision, no code changes. The
+camera-attached directional light (originally required by the assignment
+brief) is out of scope for this submission. `include/pgk/lighting/DirectionalLight.h`,
+`src/lighting/DirectionalLight.cpp`, and `include/pgk/lighting/Light.h`
+remain as empty stubs already committed in an earlier commit — left as-is
+rather than deleted, since removing them wasn't requested and they don't
+affect the build either way.
