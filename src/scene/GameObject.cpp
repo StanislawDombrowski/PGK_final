@@ -10,9 +10,12 @@ namespace pgk{
         GameObject::scale = scale;
         GameObject::color = material;
 
-        GameObject::modelMatrix = glm::mat4(1.f);
+        updateModelMatrix();
+    }
+
+    void GameObject::updateModelMatrix(){
         glm::mat4 rotationMatrix = glm::mat4_cast(glm::quat(glm::radians(rotation)));
-        modelMatrix = glm::translate(modelMatrix, position) * rotationMatrix * glm::scale(modelMatrix, scale);
+        modelMatrix = glm::translate(glm::mat4(1.f), position) * rotationMatrix * glm::scale(glm::mat4(1.f), scale);
     }
 
     void GameObject::draw(pgk::Shader& shader){

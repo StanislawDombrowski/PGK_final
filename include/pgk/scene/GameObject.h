@@ -23,5 +23,9 @@ namespace pgk{
             ~GameObject() = default;
 
             void draw(pgk::Shader& shader);
+
+            // Recomputes modelMatrix from position/rotation/scale. Call after
+            // anything (e.g. physics) mutates them.
+            void updateModelMatrix();
     };
 };

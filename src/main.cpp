@@ -10,9 +10,13 @@
 #include "pgk/core/Application.h"
 #include "pgk/core/Input.h"
 #include "pgk/geometry/Cube.h"
+#include "pgk/geometry/Sphere.h"
 #include "pgk/graphics/Mesh.h"
 #include "pgk/graphics/Shader.h"
 #include "pgk/lighting/PointLight.h"
+#include "pgk/physics/Collider.h"
+#include "pgk/physics/PhysicsWorld.h"
+#include "pgk/physics/RigidBody.h"
 #include "pgk/scene/GameObject.h"
 #include "pgk/utils/FpsCounter.h"
 
@@ -30,13 +34,26 @@ int main()
         pgk::Camera camera(glm::vec3(-3, 0, 0), 0, 0, aspect_ratio);
         pgk::Input input(app.window());
         pgk::FpsCounter fpsCounter;
+
         pgk::Mesh cube = pgk::buildCubeMesh();
+        pgk::Mesh sphere = pgk::buildSphereMesh();
 
-        pgk::GameObject cubeObject1(cube, glm::vec3(0.f), glm::vec3(0.f), glm::vec3(1.f), glm::vec3(1.0f, 0.5f, 0.2f));
-        pgk::GameObject cubeObject2(cube, glm::vec3(0.f, 0.f, 2.f), glm::vec3(5.f, 2.f, 0.f), glm::vec3(1.f), glm::vec3(0.2f, 0.32f, 0.82f));
+        pgk::GameObject cubeObject(cube, glm::vec3(0.f, -1.f, 0.f), glm::vec3(0.f), glm::vec3(20.f, 0.3f, 20.f), glm::vec3(1.0f, 0.5f, 0.2f));
+        pgk::GameObject wallObject(cube, glm::vec3(0.f, 2.f, -11.f), glm::vec3(0.f), glm::vec3(15.f, 10.f, 0.3f), glm::vec3(1.0f, 0.5f, 0.2f));
+        pgk::GameObject sphereObject(sphere, glm::vec3(0.f, 0.8f, 0.f), glm::vec3(0.f), glm::vec3(1.f), glm::vec3(0.2f, 0.32f, 0.82f));
 
-        pgk::PointLight pointLight(
-            glm::vec3(0.0f, 2.5f, 2.0f),   // position
+        pgk::Collider groundCollider(cubeObject, glm::vec3(10.f, 0.15f, 10.f));
+        pgk::Collider wallCollider(wallObject, glm::vec3(7.5f, 5.f, 0.15f));
+        pgk::Collider sphereCollider(sphereObject, glm::vec3(1.f, 1.f, 1.f));
+
+        pgk::PhysicsWorld physicsWorld;
+        pgk::RigidBody sphereBody(sphereObject, sphereCollider);
+        physicsWorld.addBody(sphereBody);
+        physicsWorld.addStaticCollider(groundCollider);
+        physicsWorld.addStaticCollider(wallCollider);
+
+        pgk::PointLight pointLight1(
+            glm::vec3(2.0f, 3.f, 0.f),   // position
             glm::vec3(1.0f, 1.0f, 1.0f),   // color
             5.f,   // ambientStrength
             1.f,    // diffuseStrength
@@ -45,6 +62,29 @@ int main()
             0.35f,   // linear
             0.44f    // quadratic
         );
+
+        pgk::PointLight pointLight2(
+            glm::vec3(-5.0f, 7.f, -5.0f),   // position
+            glm::vec3(1.0f, 1.0f, 1.0f),   // color
+            5.f,   // ambientStrength
+            1.f,    // diffuseStrength
+            0.8f,    // specularStrength
+            1.0f,    // constant
+            0.35f,   // linear
+            0.44f    // quadratic
+        );
+
+        pgk::PointLight pointLight3(
+            glm::vec3(5.0f, 7.f, -5.0f),   // position
+            glm::vec3(1.0f, 1.0f, 1.0f),   // color
+            5.f,   // ambientStrength
+            1.f,    // diffuseStrength
+            0.8f,    // specularStrength
+            1.0f,    // constant
+            0.35f,   // linear
+            0.44f    // quadratic
+        );
+
 
         pgk::Shader basicShader("assets/shaders/lit.vert", "assets/shaders/lit.frag");
 
@@ -56,7 +96,8 @@ int main()
                 if (glfwGetKey(app.window().handle(), GLFW_KEY_ESCAPE) == GLFW_PRESS) {
                     app.window().setShouldClose(true);
                 }
-                input.update(camera, deltaSeconds);
+                input.update(camera, physicsWorld, deltaSeconds);
+                physicsWorld.step(deltaSeconds);
 
                 if (fpsCounter.update(deltaSeconds)) {
                     app.window().setTitle("PGK - " + std::to_string(static_cast<int>(fpsCounter.fps())) + " FPS");
@@ -66,9 +107,13 @@ int main()
                 basicShader.use();
                 basicShader.setMat4("view", camera.viewMatrix);
                 basicShader.setVec3("viewPos", camera.position);
-                pointLight.uploadTo(basicShader);
-                cubeObject1.draw(basicShader);
-                cubeObject2.draw(basicShader);
+                basicShader.setInt("numPointLights", 3);
+                pointLight1.uploadTo(basicShader, 0);
+                pointLight2.uploadTo(basicShader, 1);
+                pointLight3.uploadTo(basicShader, 2);
+                cubeObject.draw(basicShader);
+                wallObject.draw(basicShader);
+                sphereObject.draw(basicShader);
             });
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << '\n';

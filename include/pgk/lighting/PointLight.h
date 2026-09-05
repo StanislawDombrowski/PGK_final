@@ -21,6 +21,8 @@ namespace pgk{
             glm::float32 constant, glm::float32 linear, glm::float32 quadratic);
         ~PointLight() = default;
 
-        void uploadTo(Shader& shader);
+        // `index` selects which element of the shader's pointLights[] array
+        // this light writes to (must be < MAX_POINT_LIGHTS in lit.frag).
+        void uploadTo(Shader& shader, int index);
     };
 };

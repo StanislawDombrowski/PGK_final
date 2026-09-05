@@ -385,3 +385,258 @@ closer — not urgent, just flagged.
 `main.cpp`'s render callback, alongside the other per-frame uniforms.
 Rebuilt clean (only the pre-existing unrelated `main.cpp` narrowing
 warning remains).
+
+---
+
+**Prompt:**
+> I added a sphere mesh and setup the scene in main for testing. We can
+> move to physics so that the sphere falls down. When that works we will
+> move to collisons. Can you help me setup the physics side?
+
+**Result:** User added `geometry/Sphere.h/.cpp` and a ground cube +
+sphere `GameObject` in `main.cpp` themselves. Implemented the physics
+scaffold (no collision yet, by design — that's the explicitly-agreed next
+step):
+- `GameObject::updateModelMatrix()` — extracted the constructor's TRS math
+  into a reusable method (same pattern as `Camera::updateViewMatrix()`,
+  which had been flagged as a prerequisite back when `GameObject`'s
+  `modelMatrix`-caching was first reviewed).
+- `pgk::RigidBody` (`include/pgk/physics/RigidBody.h` / `src/physics/RigidBody.cpp`)
+  — references a `GameObject`, holds `velocity`/`useGravity`, `step(dt)`
+  applies constant gravity (`-9.81`) to velocity, integrates position, and
+  calls `updateModelMatrix()`.
+- `pgk::PhysicsWorld` (`include/pgk/physics/PhysicsWorld.h` / `src/physics/PhysicsWorld.cpp`)
+  — holds non-owning `RigidBody*` pointers (bodies stay owned wherever
+  they're constructed, matching the project's existing ownership style),
+  `step(dt)` iterates and steps each one.
+- Wired into `main.cpp`: only the sphere gets a `RigidBody` (the ground
+  cube stays static/never moves); `physicsWorld.step(deltaSeconds)` added
+  to the update callback.
+
+Verified with real screenshots, not just by reading the code: at 300/450/600ms
+after launch the sphere is visibly sinking deeper into the ground cube frame
+by frame (as expected — no `Collider` exists yet, so it passes straight
+through); left running longer it falls out of frame entirely, consistent
+with real quadratic gravity acceleration over ~1 second. Confirms the
+integration math is correct; collision response (stopping/bouncing off the
+ground) is the deliberately-deferred next step.
+
+---
+
+**Prompt:**
+> Yes, we will implement the AABB collisions. Start the work on that
+
+**Result:** Implemented AABB-vs-AABB collision detection + response (every
+object, including the ball, approximated as a box collider — matches the
+user's explicit choice of AABB over exact sphere geometry):
+- `pgk::Collider` (`include/pgk/physics/Collider.h` / `src/physics/Collider.cpp`)
+  — references a `GameObject`, stores `halfExtents`, computes `min()`/`max()`
+  live from the object's current position (doesn't rotate with the object —
+  the standard AABB trade-off). Free function `intersects(a, b)`.
+- `RigidBody` extended to also reference a `Collider&`, plus
+  `resolveCollision(const Collider& other)`: computes overlap on all three
+  axes, and if genuinely overlapping, pushes the body out along whichever
+  axis needs the smallest correction and reflects that axis's velocity
+  component scaled by a new `restitution` field (default `0.6`, added now
+  since "simple physics to bounce the ball" needs it, not spec­ulative).
+- `PhysicsWorld` extended with `addStaticCollider(Collider&)` and a
+  `m_staticColliders` list; `step()` now checks each dynamic body's
+  collider against every static one after integrating it, and calls
+  `resolveCollision` on overlap.
+- Wired into `main.cpp`: `groundCollider` (half-extents `1.5,0.25,1.5`,
+  matching the ground cube's scale) registered as static; `sphereCollider`
+  (half-extents `1,1,1`, matching the sphere mesh's actual radius of `1.0`)
+  attached to the sphere's `RigidBody`.
+
+Verified with real screenshots at the user's actual scene setup (drop
+height `y=0.8`): sphere settles right on top of the ground instead of
+passing through. Since that drop height only produces a small, hard-to-see
+bounce, additionally ran a temporary local-only test (dropped from `y=4.0`,
+reverted after) to confirm actual velocity reflection works, not just
+penetration correction — captured frames clearly showing the sphere land,
+visibly bounce back up off the surface with real separation, then re-settle
+with reduced amplitude on the next bounce, consistent with `restitution=0.6`
+damping. Reverted the test change; `main.cpp`'s actual drop height is
+untouched at `0.8`.
+
+---
+
+**Prompt:**
+> Can you add a bounds field in the colider? I want to create an addForce
+> function that will take the contact point at a colined to apply force at
+
+**Result:** Asked a clarifying question first, since it was a real fork:
+should `addForce` induce rotation (torque) at the contact point, or just
+change linear velocity? User chose linear-only. Implemented:
+- `Collider` — added a `Bounds{min, max}` struct and a `bounds()` accessor
+  returning both together (existing `min()`/`max()` kept as-is).
+- `RigidBody` — added a `mass` field (default `1.0`, re-added since forces
+  need mass to become velocity changes — this is exactly the "not needed
+  yet" case flagged when `mass` was deliberately dropped from the class
+  earlier) and `addForce(const glm::vec3& force, const glm::vec3&
+  contactPoint)`, which applies `force` as an instantaneous impulse
+  (`velocity += force / mass`). `contactPoint` is accepted (parameter name
+  commented out in the `.cpp` to avoid an unused-parameter warning) but has
+  no effect yet, documented in the header as future torque-system-only,
+  since `RigidBody` has no angular velocity/orientation state.
+Rebuilt clean, no new warnings.
+
+---
+
+**Prompt:**
+> Can you redo the changes in the rigidbody.h. I lost them.
+
+**Result:** User's local edits to `RigidBody.h` had reverted the `mass`
+field and mangled the `addForce` declaration into `void addForce(float
+force, );` (wrong type, missing `contactPoint`, trailing comma —
+non-compiling). `RigidBody.cpp` still had the correct implementation
+from before, untouched. Restored the header to match: `mass` field back,
+`addForce(const glm::vec3& force, const glm::vec3& contactPoint)` with its
+explanatory comment. Rebuilt clean.
+
+---
+
+**Prompt:**
+> Now inside the input class I want to apply the addForce function uinsg
+> right mouse button to an object that I look at at the contact point that
+> is an intersecion of a ray coming out of a camera center and the object.
+> The force should only be applied if the distance from a camera is less
+> than a set value. While you work on that I will prepare the scen in the
+> main function.
+
+**Result:** Implemented raycast-push in `pgk::Input`:
+- `PhysicsWorld` — added a `bodies()` accessor (previously private-only)
+  so `Input` can iterate dynamic bodies to raycast against.
+- `Input::update()` signature extended to take `PhysicsWorld&`. Kept the
+  existing right-mouse-drag camera-rotate behavior unchanged, and added a
+  new **edge-triggered** action (fires only on the frame RMB transitions
+  from up to down, not every frame it's held, reusing the existing
+  `m_wasRotating` flag) — a private `tryPushObjectUnderCursor()` casts a
+  ray from `camera.position` along `camera.front` (i.e. screen-center /
+  "what you're looking at", not the OS mouse cursor position — the camera
+  has no locked/hidden cursor, so "look direction" is the only sensible
+  reading of "an object that I look at" here), tests it against every
+  dynamic body's `Collider::bounds()` via a standard slab-method ray/AABB
+  intersection (new private helper in `Input.cpp`), finds the nearest hit,
+  and if that hit is within a new `m_pushMaxDistance` (default `10`), calls
+  `body->addForce(camera.front * m_pushForceMagnitude, contactPoint)` with
+  `m_pushForceMagnitude` defaulting to `15`. Both constants are private
+  tunables on `Input`.
+- Updated `main.cpp`'s one existing call site
+  (`input.update(camera, deltaSeconds)` → `input.update(camera, physicsWorld,
+  deltaSeconds)`) since that's just call-site wiring for the new parameter,
+  not scene content — left everything else in `main.cpp` untouched since
+  the user said they'd handle the scene setup themselves.
+
+Verified with simulated OS input (quick right-click at screen center, no
+drag): sphere visibly launched away from the camera across three frames,
+shrinking into the distance — confirms the raycast hit, distance check
+passed, and `addForce` fired correctly. Also noted (informational, not
+fixed): the editor's clangd diagnostics show a stale error on
+`main.cpp`/`Sphere.cpp` even though the real `cmake --build` compiles
+clean — likely a clangd config/include-path mismatch, unrelated to the
+actual MSVC build.
+
+---
+
+**Prompt:**
+> Sorry, I mean that the add force is at left mouse button. The right
+> button should be as it was
+
+**Result:** Moved the push trigger from right-click to left-click:
+`Input` gained its own `m_wasLeftMouseDown` edge-detection state
+(separate from `m_wasRotating`, which right-click still uses only for
+camera rotation), and `tryPushObjectUnderCursor()` is now called only on
+the frame `GLFW_MOUSE_BUTTON_LEFT` transitions from up to down. Right-click
+drag no longer triggers a push at all. Rebuilt clean and re-verified with
+simulated input: a right-click-drag now only rotates the camera (sphere
+stays physically in place, just shifts on screen as the view angle
+changes), while a left-click launches the sphere away as before.
+
+---
+
+**Prompt:**
+> Can you modify the lit.frag shader to accept multiple lights?
+
+**Result:** User had added a wall `GameObject` + three `PointLight`s
+(`pointLight1/2/3`) in `main.cpp`, each calling `uploadTo(basicShader)`.
+Diagnosed why that wasn't going to work as-is before making any change:
+`uploadTo` always wrote to the same `"pointLight.*"` uniform names
+regardless of which `PointLight` called it, so all three calls overwrote
+each other and only the last one (`pointLight3`) ever had any visual
+effect. Fixed by making the shader and upload path array-aware:
+- `lit.frag` — replaced the single `uniform PointLight pointLight;` with
+  `uniform PointLight pointLights[MAX_POINT_LIGHTS]` (`MAX_POINT_LIGHTS`
+  `#define`d to 4) + `uniform int numPointLights;`, factored the per-light
+  Blinn-Phong math into a `calcPointLight()` function, and `main()` now
+  sums `calcPointLight()` over `pointLights[0..numPointLights)` before
+  multiplying by `uColor` once.
+- `PointLight::uploadTo` — added an `int index` parameter; builds the
+  uniform name prefix as `"pointLights[" + index + "]."` so each light
+  writes to its own array slot instead of colliding.
+- `main.cpp` — updated the three (now mechanically necessary) call sites to
+  `uploadTo(basicShader, 0/1/2)`, and added
+  `basicShader.setInt("numPointLights", 3)` alongside them.
+
+Verified: launched the exe and confirmed it stayed running/responsive
+(a GLSL compile error would throw immediately, caught by `main.cpp`'s
+try/catch, and exit within milliseconds — it didn't), and the resulting
+screenshot shows a broad, bright illumination spread across the ground
+consistent with all three lights (spread across `x=-5..5`) contributing,
+not just one. Noted for later: a 4th light would need `MAX_POINT_LIGHTS`
+bumped in `lit.frag` too, since GLSL array uniforms are fixed-size.
+
+---
+
+**Prompt:**
+> When the force is applied, the collision no longer works - the sphere
+> falls through the floor
+
+**Result:** Root-caused before changing anything: the user had resized the
+ground `GameObject` to scale `(20, 0.3, 20)` and added a wall at
+`(15, 10, 0.3)`, but `groundCollider`/`wallCollider` in `main.cpp` still
+used the old `(1.5, 0.25, 1.5)` half-extents (a stale leftover, and the
+wall's collider was just a copy-paste of the ground's, matching neither
+shape). At rest near the origin the sphere stayed within that stale 3x3
+footprint, so collision looked fine — but any push sending it sideways past
+`|x|>1.5` or `|z|>1.5` exited the *collider's* tiny footprint while still
+visually inside the real 20x20 floor, so it fell through empty
+collision-less space from then on. Fixed by matching half-extents to the
+actual current scales (half-extent = scale x 0.5, since the cube mesh spans
++-0.5): `groundCollider` -> `(10, 0.15, 10)`, `wallCollider` -> `(7.5, 5,
+0.15)`. Verified post-fix: pushed the sphere and tracked it over ~4 seconds
+of screenshots — it stays visible near the ground/sky horizon line as it
+flies away and shrinks with distance, consistent with still resting near
+ground height rather than sinking through (a real fall-through would drop
+it far below y=0 almost immediately, and the now-large floor would occlude
+it from view within a frame or two).
+
+---
+
+**Prompt:**
+> you can update the add force function to actually use the contact point
+
+**Result:** Noticed and cleaned up a leftover from the user's own edits
+first: `RigidBody.h` had both a dead public `mass` field and a private
+`m_mass` set via a constructor parameter the user had added — `addForce`
+already used `m_mass`, so changing the public `mass` field did nothing.
+Removed the dead public field. Then implemented torque:
+- `RigidBody` — added `angularVelocity` (degrees/sec, public) and
+  `momentOfInertia` (simplified single-scalar resistance to rotation, not
+  a full inertia tensor, default `1.0`). `addForce` now also computes an
+  angular impulse from the lever arm (`contactPoint - position`) crossed
+  with `force`, divided by `momentOfInertia`, added to `angularVelocity`.
+  `step()` now integrates `GameObject::rotation += angularVelocity *
+  deltaSeconds` alongside the existing position integration.
+
+Verified numerically, not just visually (a plain untextured sphere can't
+show rotation on screen either way): temporarily added a debug print of
+`sphereObject.rotation`/`sphereBody.angularVelocity` each frame, rebuilt,
+launched with stdout redirected to a log file, triggered a left-click, and
+inspected the log. Confirmed `angularVelocity` jumped to `(0, 0, 11.08)`
+the instant the force landed — physically correct, since the ray hits the
+sphere below its center height while pushing forward, producing top-spin
+around Z — and `rotation.z` climbed steadily frame by frame afterward
+(0.008 deg to 3.85 deg over ~300ms), confirming the integration in
+`step()` works. Reverted the debug print; `main.cpp` is back to the
+user's actual content.
