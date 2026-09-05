@@ -23,6 +23,7 @@ public:
     static void pollEvents();
 
     void setResizeCallback(ResizeCallback callback);
+    void setTitle(const std::string& title) const;
 
     int width() const { return m_width; }
     int height() const { return m_height; }

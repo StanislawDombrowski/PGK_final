@@ -1,8 +1,6 @@
 #pragma once
 
 #include "glm/fwd.hpp"
-#include <cstdint>
-#include <vector>
 
 #include <glad/gl.h>
 #include <glm/glm.hpp>

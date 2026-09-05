@@ -1,6 +1,6 @@
 #include <cstdlib>
 #include <iostream>
-#include <vector>
+#include <string>
 
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -12,6 +12,8 @@
 #include "pgk/geometry/Cube.h"
 #include "pgk/graphics/Mesh.h"
 #include "pgk/graphics/Shader.h"
+#include "pgk/scene/GameObject.h"
+#include "pgk/utils/FpsCounter.h"
 
 int main()
 {
@@ -26,9 +28,13 @@ int main()
 
         pgk::Camera camera(glm::vec3(-3, 0, 0), 0, 0, aspect_ratio);
         pgk::Input input(app.window());
+        pgk::FpsCounter fpsCounter;
         pgk::Mesh cube = pgk::buildCubeMesh();
 
-        pgk::Shader basicShader("assets/shaders/basic_cam.vert", "assets/shaders/basic.frag");
+        pgk::GameObject cubeObject1(cube, glm::vec3(0.f), glm::vec3(0.f), glm::vec3(1.f), glm::vec3(1.0f, 0.5f, 0.2f));
+        pgk::GameObject cubeObject2(cube, glm::vec3(0.f, 0.f, 2.f), glm::vec3(5.f, 2.f, 0.f), glm::vec3(1.f), glm::vec3(0.2f, 0.32f, 0.82f));
+
+        pgk::Shader basicShader("assets/shaders/basic_model.vert", "assets/shaders/basic.frag");
 
         basicShader.use();
         basicShader.setMat4("projection", camera.projectionMatrix);
@@ -39,12 +45,16 @@ int main()
                     app.window().setShouldClose(true);
                 }
                 input.update(camera, deltaSeconds);
+
+                if (fpsCounter.update(deltaSeconds)) {
+                    app.window().setTitle("PGK - " + std::to_string(static_cast<int>(fpsCounter.fps())) + " FPS");
+                }
             },
             [&]() {
                 basicShader.use();
                 basicShader.setMat4("view", camera.viewMatrix);
-                basicShader.setVec3("uColor", glm::vec3(1.0f, 0.5f, 0.2f));
-                cube.draw();
+                cubeObject1.draw(basicShader);
+                cubeObject2.draw(basicShader);
             });
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << '\n';

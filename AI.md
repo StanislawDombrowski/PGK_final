@@ -216,3 +216,88 @@ Verified with actual simulated OS input (`user32.dll` `keybd_event`/
 200px — view rotated and the cube went from showing one flat face to two
 adjacent faces at an angle, which also incidentally confirms the cube
 geometry, camera, and projection are all correct together.
+
+---
+
+**Prompt:**
+> We can work on the GameObject class. I assume it should consist of the
+> game objects mesh, position, rotation, scale... What else should be in
+> the class?
+
+**Result:** Advisory only, no code written. Recommended: a color/material
+field (the shader's `uColor` needs to differ per object), a non-owning
+`Mesh*`/reference rather than owning a `Mesh` by value (so objects can share
+GPU buffers instead of each duplicating them), and a cached model matrix
+plus a `draw(Shader&)` method. Flagged the open design question of whether
+physics state belongs on `GameObject` directly vs. `PhysicsWorld` tracking
+bodies separately — left for later since `Collider`/`RigidBody` don't exist
+yet.
+
+---
+
+**Prompt:**
+> How can I calculate the rotation angle for the rotate matrix, based on the
+> rotation vec3?
+
+**Result:** Explanation only, no code written. Covered building a `mat4`
+from a `vec3` of Euler angles via `glm::mat4_cast(glm::quat(glm::radians(rotation)))`
+(recommended, since `glm::rotate` only takes one angle+axis at a time and
+GLM's `quat(vec3)` constructor fixes the axis-composition order for you),
+versus manually chaining three `glm::rotate` calls (order-sensitive, easy to
+get inconsistent results).
+
+---
+
+**Prompt:**
+> Is this function for drawing the object good: [pasted an early draft of
+> GameObject::draw] ... how can I call the draw function from mesh?
+
+**Result:** User had already written `GameObject.h`/`.cpp` with the fields
+discussed above. Reviewed by reading the actual files (not just the pasted
+snippet) and building — confirmed a real link error matching what the code
+predicted:
+- `static glm::mat4 modelMatrix;` in the header made the matrix shared
+  across every `GameObject` instance instead of per-object, and had no
+  out-of-class definition — `LNK2001` on `pgk::GameObject::modelMatrix`.
+- `.cpp` defined a free function `pgk::draw(Shader&)` instead of
+  `GameObject::draw(Shader&)` — same class of mistake as the earlier `Cube`
+  bug (missing `GameObject::` qualifier).
+- `color` was stored but never uploaded as `uColor`.
+Gave the corrected `draw()` (`shader.use()`, `setMat4("model", ...)`,
+`setVec3("uColor", color)`, `mesh->draw()` since `mesh` is a pointer) and
+offered to apply; user applied the fixes themselves.
+
+---
+
+**Prompt:**
+> You can check the current state before I commit. In the future there will
+> be an update funciton for interacting with the physics. Also you can
+> setup a simple file for performence measurment in the utils folder. I
+> want to display the fps in the window top bar
+
+**Result:** Reviewed the user's own fixes to `GameObject` (all three issues
+from the previous review resolved) plus two new `GameObject`s wired into
+`main.cpp` with a new `assets/shaders/basic_model.vert` (adds a `model`
+uniform, `projection * view * model * vertex` — correct order). Built clean
+and screenshotted: two independently-positioned/colored/rotated cubes
+render correctly, confirming per-instance model matrices and shared-mesh
+rendering both work. Flagged (not yet fixed, since there's no `update()` to
+call it from yet): `modelMatrix` is cached at construction only, so once a
+physics `update()` mutates position/rotation/scale later, `draw()` needs
+`modelMatrix` recomputed too (same pattern as `Camera::updateViewMatrix()`).
+
+Then implemented FPS display: added `Window::setTitle(const std::string&)`
+(`core/Window.h`/`.cpp`, wraps `glfwSetWindowTitle`) and a new
+`pgk::FpsCounter` (`include/pgk/utils/FpsCounter.h` / `src/utils/FpsCounter.cpp`
+— the first file in `src/utils/`, which didn't exist before) that averages
+frame time over ~1-second windows and reports `true` from `update()` only
+when its value just refreshed. Wired into `main.cpp`'s update callback to
+push a new window title (`"PGK - <fps> FPS"`) only on those refreshes.
+Verified at runtime (not just by reading the code): launched the exe and
+polled `MainWindowTitle` twice, ~1.3s apart — got `"PGK - 63 FPS"` then
+`"PGK - 60 FPS"` (60 matches the vsync-locked refresh rate `Window` already
+enables). Also noted for future reference: the first build after adding
+`FpsCounter.cpp` hit a transient `LNK2019` because `CONFIGURE_DEPENDS`
+regenerated project files mid-build without the new file; a second
+`cmake --build` picked it up fine — not a code bug, just a one-time hazard
+whenever a new `.cpp` file is added.

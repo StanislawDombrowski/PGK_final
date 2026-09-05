@@ -45,7 +45,7 @@ Window::Window(int width, int height, const std::string& title)
     ++s_windowCount;
 
     glfwMakeContextCurrent(m_handle);
-    glfwSwapInterval(1);
+    glfwSwapInterval(0);
 
     if (!gladLoadGL(reinterpret_cast<GLADloadfunc>(glfwGetProcAddress))) {
         throw std::runtime_error("Failed to load OpenGL function pointers (glad)");
@@ -90,6 +90,11 @@ void Window::pollEvents()
 void Window::setResizeCallback(ResizeCallback callback)
 {
     m_resizeCallback = std::move(callback);
+}
+
+void Window::setTitle(const std::string& title) const
+{
+    glfwSetWindowTitle(m_handle, title.c_str());
 }
 
 void Window::framebufferSizeCallback(GLFWwindow* handle, int width, int height)
