@@ -1,5 +1,4 @@
 #include "pgk/scene/GameObject.h"
-#include "glm/ext/matrix_transform.hpp"
 
 namespace pgk{
 
@@ -24,4 +23,4 @@ namespace pgk{
         mesh->draw();
     }
 
-}
+};

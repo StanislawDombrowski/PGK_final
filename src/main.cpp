@@ -12,6 +12,7 @@
 #include "pgk/geometry/Cube.h"
 #include "pgk/graphics/Mesh.h"
 #include "pgk/graphics/Shader.h"
+#include "pgk/lighting/PointLight.h"
 #include "pgk/scene/GameObject.h"
 #include "pgk/utils/FpsCounter.h"
 
@@ -34,7 +35,18 @@ int main()
         pgk::GameObject cubeObject1(cube, glm::vec3(0.f), glm::vec3(0.f), glm::vec3(1.f), glm::vec3(1.0f, 0.5f, 0.2f));
         pgk::GameObject cubeObject2(cube, glm::vec3(0.f, 0.f, 2.f), glm::vec3(5.f, 2.f, 0.f), glm::vec3(1.f), glm::vec3(0.2f, 0.32f, 0.82f));
 
-        pgk::Shader basicShader("assets/shaders/basic_model.vert", "assets/shaders/basic.frag");
+        pgk::PointLight pointLight(
+            glm::vec3(0.0f, 2.5f, 2.0f),   // position
+            glm::vec3(1.0f, 1.0f, 1.0f),   // color
+            5.f,   // ambientStrength
+            1.f,    // diffuseStrength
+            0.8f,    // specularStrength
+            1.0f,    // constant
+            0.35f,   // linear
+            0.44f    // quadratic
+        );
+
+        pgk::Shader basicShader("assets/shaders/lit.vert", "assets/shaders/lit.frag");
 
         basicShader.use();
         basicShader.setMat4("projection", camera.projectionMatrix);
@@ -53,6 +65,8 @@ int main()
             [&]() {
                 basicShader.use();
                 basicShader.setMat4("view", camera.viewMatrix);
+                basicShader.setVec3("viewPos", camera.position);
+                pointLight.uploadTo(basicShader);
                 cubeObject1.draw(basicShader);
                 cubeObject2.draw(basicShader);
             });

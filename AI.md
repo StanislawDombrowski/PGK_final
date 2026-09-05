@@ -301,3 +301,87 @@ enables). Also noted for future reference: the first build after adding
 regenerated project files mid-build without the new file; a second
 `cmake --build` picked it up fine — not a code bug, just a one-time hazard
 whenever a new `.cpp` file is added.
+
+---
+
+**Prompt:**
+> We can work on the lighting part. Can you walk me through what to setup
+> in the point light and how to prepare the shader?
+
+**Result:** Explanation only, no code written. Walked through: `PointLight`
+fields (position, color, ambient/diffuse/specular strength scalars,
+constant/linear/quadratic attenuation); `lit.vert` needing to output
+world-space `FragPos` and a properly transformed `Normal` (via the normal
+matrix `transpose(inverse(model))`, needed because `GameObject` allows
+non-uniform scale); and `lit.frag`'s Blinn-Phong calculation (halfway-vector
+specular, distance attenuation, `viewPos`/`uColor` uniforms). Flagged that
+`GameObject` has no shininess field — recommended hardcoding a shader
+constant for now rather than adding a material struct.
+
+---
+
+**Prompt:**
+> Should there be 'use' function that makes the light work?
+
+**Result:** Advisory only. Recommended against naming it `use()` — unlike
+`Shader::use()` (a real `glUseProgram` state change), a light has no GL
+object to activate; it just pushes CPU-side data into whichever shader is
+already bound. Suggested `uploadTo(Shader&) const` instead.
+
+---
+
+**Prompt:**
+> Could this functionality just be in a constructor?
+
+**Result:** Advisory only. Explained why not: a constructor runs once, but
+the light's uniforms need refreshing whenever the light's data changes or a
+different shader needs them — same reason `view`/`projection` are re-set
+every frame rather than once at startup.
+
+---
+
+**Prompt:**
+> How do I use shader.set... in this shader setup?
+
+**Result:** User had already written `PointLight.h`/`.cpp` themselves
+(constructor + empty `uploadTo` stub). Pointed out `PointLight::uploadTo(Shader&){`
+was missing its `void` return type (wouldn't compile), then gave the
+`uploadTo` body: one `shader.setVec3`/`setFloat` call per field, using
+`"pointLight.<fieldName>"` uniform-name strings to match the GLSL struct's
+instance name, and reiterated the `shader.use()`-before-`set*` ordering.
+
+---
+
+**Prompt:**
+> Can you suggest some default values for a PointLight object for testing?
+
+**Result:** Explanation only, no files edited. Suggested position above the
+cubes `(0, 3, 2)`, white color (isolates lighting-math correctness from
+color-mixing correctness), `ambientStrength=0.15`/`diffuseStrength=0.8`/
+`specularStrength=0.6`, and attenuation `(1.0, 0.35, 0.44)` (LearnOpenGL's
+"range ~20" row) as a scene-scale-appropriate starting point.
+
+---
+
+**Prompt:**
+> Okay, run the checks before I commit
+
+**Result:** User had wired `PointLight` into `main.cpp` (with
+`ambientStrength=5.f` instead of the suggested `0.15`) and written
+`lit.vert`/`lit.frag` matching the walkthrough. Built clean and
+screenshotted: real diffuse gradient shading visible on both cubes (not
+flat color), FPS counter confirmed working in the title bar. Found one real
+bug: `lit.frag`'s `viewPos` uniform was never set from `main.cpp`, silently
+defaulting to GLSL's `(0,0,0)` — every specular highlight was being computed
+as if the camera sat at the world origin instead of `camera.position`.
+Noted `ambientStrength=5.f` happens to look fine at the light's current
+distance due to attenuation, but would clip to white if the light moved
+closer — not urgent, just flagged.
+
+**Prompt:**
+> Yes, add that
+
+**Result:** Added `basicShader.setVec3("viewPos", camera.position);` to
+`main.cpp`'s render callback, alongside the other per-frame uniforms.
+Rebuilt clean (only the pre-existing unrelated `main.cpp` narrowing
+warning remains).
